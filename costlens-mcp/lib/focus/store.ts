@@ -2,16 +2,20 @@
  * Data store — single place that decides whether to serve live or sample data.
  *
  * Priority (all run in parallel, results aggregated):
- *   1. AWS    (if AWS_ACCESS_KEY_ID set)
- *   2. Azure  (if AZURE_TENANT_ID + AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_SUBSCRIPTION_ID set)
- *   3. GCP    (if GCP_SERVICE_ACCOUNT_KEY + GCP_BILLING_BIGQUERY_TABLE set)
- *   4. Sample data fallback (if no live providers contributed)
+ *   1. AWS       (if AWS_ACCESS_KEY_ID set)
+ *   2. Azure     (if AZURE_TENANT_ID + AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_SUBSCRIPTION_ID set)
+ *   3. GCP       (if GCP_SERVICE_ACCOUNT_KEY + GCP_BILLING_BIGQUERY_TABLE set)
+ *   4. OpenAI    (if OPENAI_API_KEY set — requires Admin key for billing data)
+ *   5. Anthropic (if ANTHROPIC_API_KEY set — connection only; billing API not yet public)
+ *   6. Sample data fallback (if no live providers contributed records)
  */
 
-import { SAMPLE_DATA }      from "./sample-data";
-import { fetchAwsRecords, checkAwsConnection }     from "./adapters/aws";
-import { fetchAzureRecords, checkAzureConnection } from "./adapters/azure";
-import { fetchGcpRecords, checkGcpConnection }     from "./adapters/gcp";
+import { SAMPLE_DATA }        from "./sample-data";
+import { fetchAwsRecords,       checkAwsConnection }       from "./adapters/aws";
+import { fetchAzureRecords,     checkAzureConnection }     from "./adapters/azure";
+import { fetchGcpRecords,       checkGcpConnection }       from "./adapters/gcp";
+import { fetchOpenAiRecords,    checkOpenAiConnection }    from "./adapters/openai-usage";
+import { fetchAnthropicRecords, checkAnthropicConnection } from "./adapters/anthropic-usage";
 import type { FocusRecord } from "./schema";
 import { logger } from "@/lib/utils/logger";
 
@@ -29,12 +33,14 @@ export async function getRecords(): Promise<StoreResult> {
   const liveRecords:   FocusRecord[] = [];
   const liveProviders: string[]      = [];
 
-  // Fire all adapter calls in parallel — adapter is responsible for checking
-  // its own credentials and returning empty on failure
-  const [aws, azure, gcp] = await Promise.all([
-    fetchAwsRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) })),
-    fetchAzureRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) })),
-    fetchGcpRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) }))
+  // Fire all adapter calls in parallel — each adapter is responsible for checking
+  // its own credentials and returning empty on failure.
+  const [aws, azure, gcp, openai, anthropic] = await Promise.all([
+    fetchAwsRecords().catch((e)       => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchAzureRecords().catch((e)     => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchGcpRecords().catch((e)       => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchOpenAiRecords().catch((e)    => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchAnthropicRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) }))
   ]);
 
   if (aws.fetched && aws.records.length > 0) {
@@ -61,6 +67,20 @@ export async function getRecords(): Promise<StoreResult> {
     logger.warn({ error: gcp.error }, "GCP configured but fetch failed");
   }
 
+  if (openai.fetched && openai.records.length > 0) {
+    liveRecords.push(...openai.records);
+    liveProviders.push("OpenAI");
+    logger.info({ count: openai.records.length }, "store: using live OpenAI data");
+  } else if (process.env.OPENAI_API_KEY) {
+    logger.warn({ error: openai.error }, "OpenAI configured but fetch failed (Admin key needed for billing)");
+  }
+
+  // Anthropic: billing API not yet public — never contributes live records
+  // but we log the connection status for /connect page health checks
+  if (process.env.ANTHROPIC_API_KEY) {
+    logger.info("Anthropic key present — billing API not yet public, using sample data for Anthropic costs");
+  }
+
   if (liveRecords.length > 0) {
     return { records: liveRecords, source: "live", providers: liveProviders };
   }
@@ -75,10 +95,12 @@ export async function getRecords(): Promise<StoreResult> {
 
 /** Connection status for the /connect page and /api/health endpoint. */
 export async function getConnectionStatus() {
-  const [aws, azure, gcp] = await Promise.all([
-    checkAwsConnection().catch((e)   => ({ connected: false, error: String(e) })),
-    checkAzureConnection().catch((e) => ({ connected: false, error: String(e) })),
-    checkGcpConnection().catch((e)   => ({ connected: false, error: String(e) }))
+  const [aws, azure, gcp, openai, anthropic] = await Promise.all([
+    checkAwsConnection().catch((e)       => ({ connected: false, error: String(e) })),
+    checkAzureConnection().catch((e)     => ({ connected: false, error: String(e) })),
+    checkGcpConnection().catch((e)       => ({ connected: false, error: String(e) })),
+    checkOpenAiConnection().catch((e)    => ({ connected: false, error: String(e) })),
+    checkAnthropicConnection().catch((e) => ({ connected: false, error: String(e) }))
   ]);
 
   return {
@@ -99,13 +121,17 @@ export async function getConnectionStatus() {
     },
     openai: {
       configured: !!process.env.OPENAI_API_KEY,
-      connected:  false,
-      note:       "Coming in Week 6"
+      connected:  openai.connected,
+      error:      openai.error,
+      note:       openai.connected
+        ? "Key valid. For billing data, use an Admin key with Usage Reporting scope."
+        : undefined
     },
     anthropic: {
       configured: !!process.env.ANTHROPIC_API_KEY,
-      connected:  false,
-      note:       "Coming in Week 6"
+      connected:  anthropic.connected,
+      error:      anthropic.error,
+      note:       (anthropic as { note?: string }).note
     }
   };
 }

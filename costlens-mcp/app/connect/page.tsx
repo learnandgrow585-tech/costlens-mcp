@@ -233,6 +233,101 @@ export default function ConnectPage() {
           </div>
         </details>
 
+        {/* ── OpenAI ────────────────────────────────────────────────── */}
+        <details
+          open={openProvider === "openai"}
+          onToggle={(e) => e.currentTarget.open && setOpenProvider("openai")}
+          className="card cursor-pointer"
+        >
+          <summary className="flex items-center justify-between cursor-pointer list-none">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🤖</span>
+              <div>
+                <div className="font-semibold text-fg">OpenAI</div>
+                <div className="text-xs text-fg-subtle">Usage API — GPT-4o, o1, and more</div>
+              </div>
+            </div>
+            <span className="text-xs px-2 py-0.5 border border-accent/30 rounded-full text-accent">
+              New
+            </span>
+          </summary>
+
+          <div className="mt-6 space-y-4">
+            <div>
+              <div className="text-accent text-xs font-medium uppercase tracking-wider mb-2">Step 1 — Create an API key</div>
+              <ol className="text-sm text-fg-muted space-y-1.5 list-decimal list-inside">
+                <li>Go to <strong className="text-fg">platform.openai.com/api-keys</strong></li>
+                <li>Click <strong className="text-fg">Create new secret key</strong></li>
+                <li>Copy the key immediately — shown only once</li>
+              </ol>
+              <p className="text-xs text-fg-subtle mt-2">
+                A regular API key is enough to connect. For live billing data, you also need an <strong className="text-fg">Admin API key</strong> (see Step 2).
+              </p>
+            </div>
+            <div>
+              <div className="text-accent text-xs font-medium uppercase tracking-wider mb-2">
+                Step 2 — Admin key for billing data (optional)
+              </div>
+              <ol className="text-sm text-fg-muted space-y-1.5 list-decimal list-inside">
+                <li>Go to <strong className="text-fg">platform.openai.com/settings/organization/admin-keys</strong></li>
+                <li>Click <strong className="text-fg">Create Admin API key</strong></li>
+                <li>Grant the <code className="font-mono text-accent text-xs">Usage Reporting</code> scope</li>
+                <li className="text-yellow-400/80">⚠ Use this key (not your regular sk- key) for live spend figures</li>
+              </ol>
+            </div>
+            <div>
+              <div className="text-accent text-xs font-medium uppercase tracking-wider mb-2">Step 3 — Add to Vercel env vars</div>
+              <div className="space-y-2">
+                <EnvVarBox name="OPENAI_API_KEY" hint="sk-admin-... (Admin key) or sk-... (connection only)" />
+              </div>
+            </div>
+            <div className="text-xs text-green-400/80 bg-green-500/5 border border-green-500/20 rounded p-3">
+              💚 Cost: OpenAI Usage API is free. Sample cost figures are shown until an Admin key with Usage Reporting scope is added.
+            </div>
+          </div>
+        </details>
+
+        {/* ── Anthropic ─────────────────────────────────────────────── */}
+        <details
+          open={openProvider === "anthropic"}
+          onToggle={(e) => e.currentTarget.open && setOpenProvider("anthropic")}
+          className="card cursor-pointer"
+        >
+          <summary className="flex items-center justify-between cursor-pointer list-none">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🧠</span>
+              <div>
+                <div className="font-semibold text-fg">Anthropic</div>
+                <div className="text-xs text-fg-subtle">Claude API — connection verification</div>
+              </div>
+            </div>
+            <span className="text-xs px-2 py-0.5 border border-accent/30 rounded-full text-accent">
+              New
+            </span>
+          </summary>
+
+          <div className="mt-6 space-y-4">
+            <div>
+              <div className="text-accent text-xs font-medium uppercase tracking-wider mb-2">Step 1 — Create an API key</div>
+              <ol className="text-sm text-fg-muted space-y-1.5 list-decimal list-inside">
+                <li>Go to <strong className="text-fg">console.anthropic.com/settings/keys</strong></li>
+                <li>Click <strong className="text-fg">Create Key</strong></li>
+                <li>Copy the key immediately — shown only once</li>
+              </ol>
+            </div>
+            <div>
+              <div className="text-accent text-xs font-medium uppercase tracking-wider mb-2">Step 2 — Add to Vercel env vars</div>
+              <div className="space-y-2">
+                <EnvVarBox name="ANTHROPIC_API_KEY" hint="sk-ant-api03-..." />
+              </div>
+            </div>
+            <div className="text-xs text-yellow-400/80 bg-yellow-500/5 border border-yellow-500/20 rounded p-3">
+              ℹ️ Anthropic does not yet offer a public billing cost API. Adding your key enables connection verification and shows
+              realistic sample Claude cost estimates in the dashboard. Live billing data will be added as soon as Anthropic releases a cost endpoint.
+            </div>
+          </div>
+        </details>
+
         {/* ── GCP ───────────────────────────────────────────────────── */}
         <details
           open={openProvider === "gcp"}
@@ -297,21 +392,6 @@ export default function ConnectPage() {
           </div>
         </details>
       </div>
-
-      {/* Coming soon */}
-      <section className="space-y-3">
-        <h2 className="text-xl font-semibold mb-3">Coming in Week 6</h2>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div className="card opacity-60">
-            <div className="text-sm font-medium text-fg-muted">OpenAI API</div>
-            <div className="text-xs text-fg-subtle mt-1">Token usage by model</div>
-          </div>
-          <div className="card opacity-60">
-            <div className="text-sm font-medium text-fg-muted">Anthropic API</div>
-            <div className="text-xs text-fg-subtle mt-1">Claude usage by model</div>
-          </div>
-        </div>
-      </section>
 
       <div className="mt-10 pt-6 border-t border-border text-sm text-fg-subtle">
         After connecting, test in the{" "}
