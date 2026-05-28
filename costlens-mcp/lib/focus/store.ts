@@ -1,15 +1,17 @@
 /**
  * Data store — single place that decides whether to serve live or sample data.
  *
- * Priority:
- *   1. AWS (if AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY set)
- *   2. Sample data fallback
- *
- * Future weeks add Azure (Week 5) and GCP (Week 5) to the priority chain.
+ * Priority (all run in parallel, results aggregated):
+ *   1. AWS    (if AWS_ACCESS_KEY_ID set)
+ *   2. Azure  (if AZURE_TENANT_ID + AZURE_CLIENT_ID + AZURE_CLIENT_SECRET + AZURE_SUBSCRIPTION_ID set)
+ *   3. GCP    (if GCP_SERVICE_ACCOUNT_KEY + GCP_BILLING_BIGQUERY_TABLE set)
+ *   4. Sample data fallback (if no live providers contributed)
  */
 
-import { SAMPLE_DATA } from "./sample-data";
-import { fetchAwsRecords } from "./adapters/aws";
+import { SAMPLE_DATA }      from "./sample-data";
+import { fetchAwsRecords, checkAwsConnection }     from "./adapters/aws";
+import { fetchAzureRecords, checkAzureConnection } from "./adapters/azure";
+import { fetchGcpRecords, checkGcpConnection }     from "./adapters/gcp";
 import type { FocusRecord } from "./schema";
 import { logger } from "@/lib/utils/logger";
 
@@ -18,57 +20,66 @@ export type DataSource = "live" | "sample";
 export interface StoreResult {
   records:    FocusRecord[];
   source:     DataSource;
-  providers:  string[];   // which live providers contributed
+  providers:  string[];
   note?:      string;
 }
 
-/**
- * Returns the best available dataset for tool calls.
- * Always resolves — never throws — falls back to sample on any error.
- */
+/** Returns the best available dataset for tool calls. */
 export async function getRecords(): Promise<StoreResult> {
-  const liveRecords: FocusRecord[] = [];
-  const liveProviders: string[]    = [];
+  const liveRecords:   FocusRecord[] = [];
+  const liveProviders: string[]      = [];
 
-  // ── AWS ────────────────────────────────────────────────────────────────
-  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
-    const aws = await fetchAwsRecords();
-    if (aws.fetched && aws.records.length > 0) {
-      liveRecords.push(...aws.records);
-      liveProviders.push("Amazon Web Services");
-      logger.info({ count: aws.records.length }, "store: using live AWS data");
-    } else {
-      logger.warn({ error: aws.error }, "store: AWS fetch failed, continuing");
-    }
+  // Fire all adapter calls in parallel — adapter is responsible for checking
+  // its own credentials and returning empty on failure
+  const [aws, azure, gcp] = await Promise.all([
+    fetchAwsRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchAzureRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) })),
+    fetchGcpRecords().catch((e) => ({ records: [], months: [], fetched: false, error: String(e) }))
+  ]);
+
+  if (aws.fetched && aws.records.length > 0) {
+    liveRecords.push(...aws.records);
+    liveProviders.push("Amazon Web Services");
+    logger.info({ count: aws.records.length }, "store: using live AWS data");
+  } else if (process.env.AWS_ACCESS_KEY_ID) {
+    logger.warn({ error: aws.error }, "AWS configured but fetch failed");
   }
 
-  // ── Azure (Week 5) ─────────────────────────────────────────────────────
-  // if (process.env.AZURE_CLIENT_ID) { ... }
+  if (azure.fetched && azure.records.length > 0) {
+    liveRecords.push(...azure.records);
+    liveProviders.push("Microsoft Azure");
+    logger.info({ count: azure.records.length }, "store: using live Azure data");
+  } else if (process.env.AZURE_TENANT_ID) {
+    logger.warn({ error: azure.error }, "Azure configured but fetch failed");
+  }
 
-  // ── GCP (Week 5) ───────────────────────────────────────────────────────
-  // if (process.env.GCP_SERVICE_ACCOUNT_KEY) { ... }
+  if (gcp.fetched && gcp.records.length > 0) {
+    liveRecords.push(...gcp.records);
+    liveProviders.push("Google Cloud");
+    logger.info({ count: gcp.records.length }, "store: using live GCP data");
+  } else if (process.env.GCP_SERVICE_ACCOUNT_KEY) {
+    logger.warn({ error: gcp.error }, "GCP configured but fetch failed");
+  }
 
-  // ── Return live if we got anything, otherwise sample ──────────────────
   if (liveRecords.length > 0) {
-    return {
-      records:   liveRecords,
-      source:    "live",
-      providers: liveProviders
-    };
+    return { records: liveRecords, source: "live", providers: liveProviders };
   }
 
   return {
     records:   SAMPLE_DATA,
     source:    "sample",
     providers: [],
-    note:      "Using sample FOCUS data. Add AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY to Vercel env vars for live data."
+    note:      "Using sample FOCUS data. Add cloud credentials via /connect for live figures."
   };
 }
 
 /** Connection status for the /connect page and /api/health endpoint. */
 export async function getConnectionStatus() {
-  const { checkAwsConnection } = await import("./adapters/aws");
-  const aws = await checkAwsConnection();
+  const [aws, azure, gcp] = await Promise.all([
+    checkAwsConnection().catch((e)   => ({ connected: false, error: String(e) })),
+    checkAzureConnection().catch((e) => ({ connected: false, error: String(e) })),
+    checkGcpConnection().catch((e)   => ({ connected: false, error: String(e) }))
+  ]);
 
   return {
     aws: {
@@ -77,23 +88,23 @@ export async function getConnectionStatus() {
       error:      aws.error
     },
     azure: {
-      configured: !!process.env.AZURE_CLIENT_ID,
-      connected:  false,
-      note:       "Coming in Week 5"
+      configured: !!process.env.AZURE_TENANT_ID,
+      connected:  azure.connected,
+      error:      azure.error
     },
     gcp: {
       configured: !!process.env.GCP_SERVICE_ACCOUNT_KEY,
-      connected:  false,
-      note:       "Coming in Week 5"
+      connected:  gcp.connected,
+      error:      gcp.error
     },
     openai: {
       configured: !!process.env.OPENAI_API_KEY,
-      connected:  !!process.env.OPENAI_API_KEY,
+      connected:  false,
       note:       "Coming in Week 6"
     },
     anthropic: {
       configured: !!process.env.ANTHROPIC_API_KEY,
-      connected:  !!process.env.ANTHROPIC_API_KEY,
+      connected:  false,
       note:       "Coming in Week 6"
     }
   };
